@@ -26,6 +26,8 @@ module Network.HTTP.ReverseProxy
     , wpsProcessBody
     , wpsUpgradeToRaw
     , wpsGetDest
+    , wpsResponseOpen
+    , wpsResponseClose
     , SetIpHeader (..)
       -- *** Local settings
     , LocalWaiProxySettings
@@ -260,6 +262,14 @@ data WaiProxySettings = WaiProxySettings
     -- Default: have one global setting
     --
     -- Since 0.4.2
+    , wpsResponseOpen :: HC.Request -> HC.Manager -> IO (HC.Response BodyReader)
+    -- ^ Allow to override the way of starting each outgoing HTTP request.
+    --
+    -- Default: Network.HTTP.Client.responseOpen
+    , wpsResponseClose :: HC.Response BodyReader -> IO ()
+    -- ^ Allow to override the way of ending each outgoing HTTP request.
+    --
+    -- Default: Network.HTTP.Client.responseClose
     }
 
 -- | How to set the X-Real-IP request header.
@@ -281,6 +291,8 @@ defaultWaiProxySettings = WaiProxySettings
         , wpsUpgradeToRaw = \req ->
             (CI.mk <$> lookup "upgrade" (WAI.requestHeaders req)) == Just "websocket"
         , wpsGetDest = Nothing
+        , wpsResponseOpen = HC.responseOpen
+        , wpsResponseClose = HC.responseClose
         }
 
 renderHeaders :: WAI.Request -> HT.RequestHeaders -> Builder
@@ -402,8 +414,8 @@ waiProxyToSettings getDest wps' manager req0 sendResponse = do
                             ($ WAI.requestBody req)
                         WAI.ChunkedBody -> HC.RequestBodyStreamChunked ($ WAI.requestBody req)
             bracket
-                (try $ HC.responseOpen req' manager)
-                (either (const $ return ()) HC.responseClose)
+                (try $ wpsResponseOpen wps' req' manager)
+                (either (const $ return ()) $ wpsResponseClose wps')
                 $ \case
                     Left e -> wpsOnExc wps e req sendResponse
                     Right res -> do
